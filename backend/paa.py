@@ -10,6 +10,10 @@ from fastapi.responses import JSONResponse, StreamingResponse
 import json
 import asyncio
 import weave
+import gradio as gr
+import threading
+import queue
+import time
 
 # Init Weave tracing
 client = weave.init("integration-tests")
@@ -27,7 +31,7 @@ app.add_middleware(
 )
 
 # OpenAI API key (Ensure you set this as an environment variable for security)
-load_dotenv("utils/.env")
+load_dotenv(".env")
 
 # Initialize OpenAI client
 client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
@@ -45,6 +49,88 @@ class ChatCompletionRequest(BaseModel):
 	stream: Optional[bool] = True  # Changed default to True to match example request
 	stop: Optional[List[str]] = None
 	user: Optional[str] = None
+
+# Create queues for communication between FastAPI and Gradio
+request_queue = queue.Queue()
+response_queue = queue.Queue()
+
+# Gradio interface for human review
+def review_message(messages_text, model, max_tokens, temperature):
+    # Display the messages and allow editing
+    return messages_text, model, max_tokens, temperature
+
+def submit_edited_message(messages_text, model, max_tokens, temperature):
+    # Parse the edited messages back to the expected format
+    try:
+        messages = json.loads(messages_text)
+        # Put the edited data in the response queue
+        response_queue.put({
+            "messages": messages,
+            "model": model,
+            "max_tokens": int(max_tokens),
+            "temperature": float(temperature)
+        })
+        return "Message submitted for processing"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+# Function to periodically check the queue
+def check_queue():
+    if not request_queue.empty():
+        req_data = request_queue.get()
+        return (
+            json.dumps(req_data["messages"], indent=2),
+            req_data["model"],
+            req_data["max_tokens"],
+            req_data["temperature"]
+        )
+    return gr.update(), gr.update(), gr.update(), gr.update()
+
+# Create and launch Gradio interface
+def create_gradio_interface():
+    with gr.Blocks() as demo:
+        with gr.Row():
+            with gr.Column():
+                gr.Markdown("## Human Review Interface")
+                messages_text = gr.Textbox(label="Messages (JSON format)", lines=10)
+                model = gr.Textbox(label="Model")
+                max_tokens = gr.Number(label="Max Tokens")
+                temperature = gr.Number(label="Temperature")
+                
+                submit_btn = gr.Button("Submit Edited Message")
+                status = gr.Textbox(label="Status")
+                
+                submit_btn.click(
+                    fn=submit_edited_message,
+                    inputs=[messages_text, model, max_tokens, temperature],
+                    outputs=status
+                )
+                
+                # Add a refresh button to manually check for new requests
+                refresh_btn = gr.Button("Check for New Requests")
+                refresh_btn.click(
+                    fn=check_queue,
+                    inputs=None,
+                    outputs=[messages_text, model, max_tokens, temperature]
+                )
+        
+        # Start a background thread to periodically update the UI
+        def polling_thread():
+            while True:
+                time.sleep(1)  # Check every second
+                if not request_queue.empty():
+                    # We can't directly update the UI from this thread,
+                    # but we can trigger a refresh when the user interacts next
+                    pass
+    
+    # Launch Gradio in a separate thread
+    threading.Thread(target=lambda: demo.launch(server_name="0.0.0.0", server_port=7860, share=True), daemon=True).start()
+    
+    # Start the polling thread
+    threading.Thread(target=polling_thread, daemon=True).start()
+
+# Start Gradio interface
+create_gradio_interface()
 
 @app.options("/{full_path:path}")
 @weave.op
@@ -90,18 +176,6 @@ async def stream_response(response):
 @app.post("/v1/chat/completions")
 @weave.op
 async def chat_completions(request: ChatCompletionRequest):
-	# Add a system message
-	# with open('lukas_website.html', 'r') as f:
-	# 	website_content = f.read()
-	# website_message = Message(
-	# 	role="user", 
-	# 	content=f"Here is the current website of Lukas Biewald. Use this as a basis:\n {website_content}")
-	# request.messages.append(website_message)
-
-
-    # test interactive questions next -> for chat
-	# what's the actual tech value here?
-
 	with open('gd_episode_david_cahn.txt', 'r') as f:
 		blog_content = f.read()
 	blog_message = Message(
@@ -114,12 +188,31 @@ async def chat_completions(request: ChatCompletionRequest):
 	messages_dict = [{"role": msg.role, "content": msg.content} for msg in request.messages]
 	
 	try:
+		# Send request to Gradio for human review
+		request_data = {
+			"messages": messages_dict,
+			"model": request.model,
+			"max_tokens": request.max_tokens,
+			"temperature": request.temperature
+		}
+		request_queue.put(request_data)
+		
+		# Wait for human to review and edit the message
+		# This is a blocking operation - in a production system you might want to use async patterns
+		edited_data = response_queue.get(timeout=300)  # 5 minute timeout
+		
+		# Use the edited data
+		edited_messages = edited_data["messages"]
+		model = edited_data["model"]
+		max_tokens = edited_data["max_tokens"]
+		temperature = edited_data["temperature"]
+		
 		if request.stream:
 			response = client.chat.completions.create(
-				model=request.model,
-				messages=messages_dict,
-				max_tokens=request.max_tokens,
-				temperature=request.temperature,
+				model=model,
+				messages=edited_messages,
+				max_tokens=max_tokens,
+				temperature=temperature,
 				stream=True,
 				stop=request.stop,
 				user=request.user
@@ -130,10 +223,10 @@ async def chat_completions(request: ChatCompletionRequest):
 			)
 		
 		response = client.chat.completions.create(
-			model=request.model,
-			messages=messages_dict,
-			max_tokens=request.max_tokens,
-			temperature=request.temperature,
+			model=model,
+			messages=edited_messages,
+			max_tokens=max_tokens,
+			temperature=temperature,
 			stop=request.stop,
 			user=request.user
 		)
@@ -143,7 +236,7 @@ async def chat_completions(request: ChatCompletionRequest):
 			"id": response.id,
 			"object": "chat.completion",
 			"created": response.created,
-			"model": request.model,
+			"model": model,
 			"system_fingerprint": f"fp_{response.id[-8:]}",
 			"choices": [
 				{
@@ -163,6 +256,8 @@ async def chat_completions(request: ChatCompletionRequest):
 		}
 			
 		return formatted_response
+	except queue.Empty:
+		raise HTTPException(status_code=408, detail="Request timed out waiting for human review")
 	except Exception as e:
 		raise HTTPException(status_code=400, detail=str(e))
 

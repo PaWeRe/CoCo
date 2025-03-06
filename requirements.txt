@@ -1,0 +1,6 @@
+weave
+fastapi[standard]
+uvicorn
+openai
+pydantic
+gradio
