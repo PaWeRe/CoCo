@@ -1,0 +1,45 @@
+**Gradient Dissent Podcast – Episode with David Cahn**
+
+**Host:** Lukas Biewald  
+**Guest:** David Cahn (Partner, Sequoia Capital)  
+
+---
+
+**[Intro Music]**  
+
+**Lukas Biewald:** Welcome back to *Gradient Dissent*! I’m your host, Lukas Biewald, and today we have a fascinating discussion ahead with David Cahn, a partner at Sequoia Capital. David has been writing some really thought-provoking pieces on AI investments, including his latest, *AI’s $200 Billion Question* and *AI’s $600 Billion Question*. We’ll be talking about the state of AI infrastructure, its financial challenges, and where we go from here. David, thanks for joining us!
+
+**David Cahn:** Thanks for having me, Lukas! I’ve been looking forward to this conversation.
+
+**Lukas:** So, let’s dive right in. Your recent articles highlight how AI infrastructure investments are reaching astronomical figures. Can you walk us through why this is happening and what the implications are?
+
+**David:** Absolutely. What we’re seeing is a race to scale—companies are pouring billions into training massive AI models and expanding their compute infrastructure. But the big question is, how do you justify that level of spending? The revenue needed to sustain these investments is enormous, and for many companies, it’s not clear where that revenue will come from yet.
+
+**Lukas:** Right, it’s almost like a gold rush, but instead of prospectors, it’s cloud providers and AI startups racing to stake their claims. Do you think the current level of investment is sustainable?
+
+**David:** That’s the trillion-dollar—or should I say, multi-hundred-billion-dollar—question. Cloud providers like AWS, Google Cloud, and Azure are in a strong position, but even they have to be careful. The margins on AI services are different from traditional cloud computing. If you look at the cost of GPUs, energy consumption, and model training, it’s easy to see how quickly expenses can outpace revenues.
+
+**Lukas:** That’s such an interesting point. Speaking of cloud providers, what do you make of the competition between them and new AI-native startups?
+
+**David:** The big cloud providers have a huge advantage in terms of infrastructure and scale, but startups are much more agile. The key differentiator is who can build AI applications that actually generate significant revenue. We’ve seen some impressive models, but at the end of the day, businesses are asking: how does this help me make money, save costs, or improve efficiency?
+
+**Lukas:** That’s a great way to put it. We’ve also been seeing major advancements in open-source AI, like DeepSeek and Stargate. How do you think open-source AI is shifting the balance of power?
+
+**David:** Open-source AI is one of the most exciting developments right now. It democratizes access to cutting-edge models, which could lower barriers for smaller companies. But at the same time, it forces big players to rethink their monetization strategies. If high-performing models are available for free or at a lower cost, why would companies pay a premium for proprietary solutions? That’s a huge strategic challenge for the major AI labs.
+
+**Lukas:** That’s a great insight. Looking ahead, where do you see AI infrastructure and investment heading over the next few years?
+
+**David:** I think we’ll see two major shifts. First, efficiency will become a key focus. Right now, everyone is chasing scale, but eventually, we’ll see optimizations that make AI training and inference more cost-effective. Second, there’s going to be consolidation—some of the smaller players won’t be able to keep up, and we’ll see mergers and acquisitions as the industry matures.
+
+**Lukas:** That makes a lot of sense. Before we wrap up, any final thoughts for our listeners?
+
+**David:** Just that this is an incredibly exciting time for AI, but also a moment where financial prudence is critical. If you’re in this space, ask yourself not just how AI can change the world, but also how it can generate sustainable business models.
+
+**Lukas:** Fantastic advice. David, thanks so much for joining me today!
+
+**David:** My pleasure, Lukas. Thanks for having me!
+
+**Lukas:** And thanks to all our listeners for tuning in to *Gradient Dissent*! If you enjoyed this episode, don’t forget to subscribe and check out our other conversations with leading voices in AI. See you next time!
+
+**[Outro Music]**
+
