@@ -52,6 +52,15 @@ class ChatCompletionRequest(BaseModel):
     stop: list[str] | None = None
     user: str | None = None
 
+class IntentRequest(BaseModel):
+    messages: list[Message]
+
+class ContextRequest(BaseModel):
+    intent: str
+
+class PreferenceRequest(BaseModel):
+    intent: str
+
 # In-memory state for tracking collaboration conversations
 collaboration_state = {}
 
@@ -118,6 +127,124 @@ async def list_models():
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+# Endpoint: discover intent from user messages
+@app.post("/v1/intent/discover")
+@weave.op
+async def discover_intent(request: IntentRequest):
+    try:
+        # Extract the user's messages
+        user_messages = [msg for msg in request.messages if msg.role == "user"]
+        if not user_messages:
+            return {"intent": "unknown", "description": "No user messages found"}
+        
+        # Analyze the last user message to determine intent
+        last_message = user_messages[-1].content
+        
+        # Simple pattern matching for demo purposes
+        # In a real implementation, you might use a more sophisticated approach
+        if "blog" in last_message.lower() or "article" in last_message.lower():
+            return {
+                "intent": "blog_writing",
+                "description": "User wants to write a blog article based on podcast transcript"
+            }
+        elif "code" in last_message.lower() or "program" in last_message.lower():
+            return {
+                "intent": "code_assistance",
+                "description": "User needs help with coding or programming"
+            }
+        elif "question" in last_message.lower() or "help" in last_message.lower():
+            return {
+                "intent": "general_assistance",
+                "description": "User has a general question or needs assistance"
+            }
+        else:
+            return {
+                "intent": "conversation",
+                "description": "User is engaging in general conversation"
+            }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+# Endpoint: get context based on intent
+@app.post("/v1/context/retrieve")
+@weave.op
+async def retrieve_context(request: ContextRequest):
+    try:
+        intent = request.intent
+        
+        # Return different context based on intent
+        if intent == "blog_writing":
+            try:
+                with open('gd_episode_david_cahn.txt', 'r') as f:
+                    content = f.read()
+                return {
+                    "context": content,
+                    "source": "gd_episode_david_cahn.txt",
+                    "description": "Transcript from Gradient Descent podcast with David Cahn"
+                }
+            except FileNotFoundError:
+                return {
+                    "context": "Transcript file not found",
+                    "source": "error",
+                    "description": "The requested transcript could not be located"
+                }
+        elif intent == "code_assistance":
+            return {
+                "context": "Code assistance context would be provided here",
+                "source": "code_examples",
+                "description": "Examples and documentation for coding assistance"
+            }
+        else:
+            return {
+                "context": "No specific context available for this intent",
+                "source": "general",
+                "description": "General knowledge base"
+            }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+# Endpoint: get preferences based on intent
+@app.post("/v1/preferences/retrieve")
+@weave.op
+async def retrieve_preferences(request: PreferenceRequest):
+    try:
+        intent = request.intent
+        
+        # Return different preferences based on intent
+        if intent == "blog_writing":
+            return {
+                "preferences": {
+                    "style": "formal and precise",
+                    "format": "blog article",
+                    "tone": "informative and professional",
+                    "length": "medium to long",
+                    "audience": "technical professionals interested in AI"
+                },
+                "description": "Preferences for writing a technical blog article"
+            }
+        elif intent == "code_assistance":
+            return {
+                "preferences": {
+                    "style": "clear and concise",
+                    "format": "code with explanations",
+                    "language": "python",
+                    "comments": "detailed",
+                    "best_practices": True
+                },
+                "description": "Preferences for providing code assistance"
+            }
+        else:
+            return {
+                "preferences": {
+                    "style": "conversational",
+                    "format": "direct answers",
+                    "tone": "helpful and friendly"
+                },
+                "description": "General preferences for conversation"
+            }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 # Endpoint: chat completions with optional human review via Redis queues
 @app.post("/v1/chat/completions")
 @weave.op
@@ -140,11 +267,29 @@ async def chat_completions(request: ChatCompletionRequest):
     # Collaboration branch for re-writing
     if cursor_rewrite and intent_delegate:
         print("***Cursor: Re-write, Intent: Delegate***")
-        with open('gd_episode_david_cahn.txt', 'r') as f:
-            blog_content = f.read()
+        
+        # Discover intent from the messages
+        intent_request = IntentRequest(messages=request.messages)
+        intent_response = await discover_intent(intent_request)
+        intent = intent_response["intent"]
+        
+        # Retrieve context based on intent
+        context_request = ContextRequest(intent=intent)
+        context_response = await retrieve_context(context_request)
+        
+        # Retrieve preferences based on intent
+        preference_request = PreferenceRequest(intent=intent)
+        preference_response = await retrieve_preferences(preference_request)
+        
+        # Create a new message with context and preferences
         blog_message = Message(
             role="user",
-            content=f"Here is the transcript from the last gradient descent episode with David Cahn. Write a detailed blog article from the perspective with key details from the transcript.:\n\n {blog_content}"
+            content=(
+                f"Here is the transcript from the last gradient descent episode with David Cahn. "
+                f"Write a detailed blog article based on this transcript.\n\n"
+                f"Context: {context_response['context']}\n\n"
+                f"Preferences: {json.dumps(preference_response['preferences'], indent=2)}"
+            )
         )
         request.messages.append(blog_message)
         model = request.model
