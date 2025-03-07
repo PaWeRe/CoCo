@@ -265,8 +265,8 @@ async def chat_completions(request: ChatCompletionRequest):
             break
 
     # Collaboration branch for re-writing
-    if cursor_rewrite and intent_delegate:
-        print("***Cursor: Re-write, Intent: Delegate***")
+    if intent_delegate:
+        print("***Intent: Delegate***")
         
         # Discover intent from the messages
         intent_request = IntentRequest(messages=request.messages)
@@ -298,8 +298,12 @@ async def chat_completions(request: ChatCompletionRequest):
         temperature = request.temperature
 
     # Collaboration branch for chat with human review
-    elif cursor_chat and intent_collaborate:
-        print("***Cursor: Chat, Intent: Collaborate***")
+    elif intent_collaborate:
+        print("***Intent: Collaborate***")
+        if cursor_rewrite: 
+            print("WARNING: Cursor Re-write doesn't have enough timeout for collaboratio. Try @coco_collab.")
+
+        # TODO: possibly only checking for where the message with the trigger word is makes the most sense
         conversation_id = hash(request.messages[0].content + request.messages[1].content)
         model = request.model
         edited_messages = [{"role": msg.role, "content": msg.content} for msg in request.messages]
