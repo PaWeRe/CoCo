@@ -4,3 +4,4 @@ uvicorn
 openai
 pydantic
 gradio
+redis
