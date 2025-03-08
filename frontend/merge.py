@@ -1,7 +1,12 @@
+import json
+import redis
 import gradio as gr
 from gradio import ChatMessage
 import time
 import random
+
+# Initialize Redis client
+redis_client = redis.Redis(host="localhost", port=6379, db=0)
 
 # Mock LLM providers (now as preference tags instead of separate dropdown)
 LLM_MODELS = ["ChatGPT", "Claude", "Perplexity", "Gemini"]
@@ -38,10 +43,43 @@ PREFERENCE_TAGS = [
 PREFERENCE_TAGS.extend([f"Use {model}" for model in LLM_MODELS])
 
 
+def submit_edited_message(
+    messages_text, model, max_tokens, temperature, collaboration_phase
+):
+    try:
+        messages = json.loads(messages_text)
+        edited_data = {
+            "messages": messages,
+            "model": model,
+            "max_tokens": int(max_tokens),
+            "temperature": float(temperature),
+            "collaboration_phase": collaboration_phase,
+        }
+        # Push the human-edited response into the Redis response queue
+        redis_client.lpush("response_queue", json.dumps(edited_data))
+        return "Message submitted for processing"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+
+def check_queue():
+    # Attempt to retrieve a pending request from the Redis request queue
+    req_data = redis_client.rpop("request_queue")
+    if req_data:
+        req_data = json.loads(req_data)
+        return (
+            json.dumps(req_data.get("messages", []), indent=2),
+            req_data.get("model", ""),
+            req_data.get("max_tokens", ""),
+            req_data.get("temperature", ""),
+            req_data.get("collaboration_phase", "Discovery"),
+        )
+    return "", "", "", "", ""
+
+
 def generate_mock_tags(category, count=3):
     """Generate random mock tags from the predefined lists"""
     if category == "context":
-        # return random.sample(CONTEXT_TAGS, min(count, len(CONTEXT_TAGS)))
         return [
             "Mike Knoop",
             "GD Episode #42",
@@ -49,7 +87,6 @@ def generate_mock_tags(category, count=3):
             "Recent Connection",
         ]
     else:
-        # return random.sample(PREFERENCE_TAGS[:11], min(count, 11))  # Only use original preferences, not LLM models
         return [
             "Sensitive Data",
             "ChatGPT",
@@ -62,15 +99,15 @@ def generate_mock_tags(category, count=3):
 INITIAL_QUESTIONS = [
     "Are you referring to your latest GD episode with Mike Knoop?",
     "Would you like to invite him to the upcoming M'n'M networking?",
-    "Drafting follow up e-mail to Mike...",
+    "Let's create a first draft of the e-mail to Mike.",
 ]
 
-# Intent quetsions to display
+# Intent questions to display
 INTENT_MSGS = [
     "Lukas wants to follow up with a contact. Searching in Social Graph for 'Mike'",
     "Following up with Mike Knoop for last GD episode",
     "Following up with Mike Knoop for last GD episode with invitation to M'n'M",
-    "Drafting e-mail to Mike: - ..., - ..., -...",
+    "Drafting follow up e-mail to Mike. De-identifying and calling ChatGPT...",
 ]
 
 
@@ -280,7 +317,6 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
             with gr.Row():
                 # Column 1: Shared Editor (always visible)
                 with gr.Column(scale=2) as editor_column:
-                    # gr.Markdown("<center><h3>Shared Editor</h3></center>")
                     editor = gr.TextArea(
                         label="Shared Editor",
                         placeholder="",
@@ -296,14 +332,12 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
 
                 # Column 2: Context and Preferences (always visible)
                 with gr.Column(scale=1) as context_column:
-                    # gr.Markdown("<center><h3>Agent Brain</h3></center>")
                     intent_display = gr.Textbox(
                         label="Agent Reasoning",
                         placeholder="Agent's thoughts will be displayed here...",
                         lines=10,
                     )
 
-                    # gr.Markdown("<center><h3>Context</h3></center>")
                     context_tags_component = gr.Dropdown(
                         multiselect=True,
                         label="Context Tags",
@@ -311,7 +345,6 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
                         allow_custom_value=True,
                     )
 
-                    # gr.Markdown("<center><h3>Preferences</h3></center>")
                     preference_tags_component = gr.Dropdown(
                         choices=PREFERENCE_TAGS,
                         multiselect=True,
@@ -319,6 +352,27 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
                         info="Tags are added automatically, but you can also edit them",
                         allow_custom_value=True,
                     )
+
+                # Add buttons for Redis interactions
+                submit_btn = gr.Button("Submit Edited Message")
+                status = gr.Textbox(label="Status")
+                submit_btn.click(
+                    fn=submit_edited_message,
+                    inputs=[editor, gr.Textbox(), gr.Number(), gr.Number(), gr.Radio()],
+                    outputs=status,
+                )
+                refresh_btn = gr.Button("Check for New Requests")
+                refresh_btn.click(
+                    fn=check_queue,
+                    inputs=None,
+                    outputs=[
+                        editor,
+                        gr.Textbox(),
+                        gr.Number(),
+                        gr.Number(),
+                        gr.Radio(),
+                    ],
+                )
 
         # Memory Tab (empty for now)
         with gr.Tab("Memory"):
@@ -346,8 +400,6 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
             return INTENT_MSGS[1], 1
         elif editor_content == INITIAL_QUESTIONS[2]:
             return INTENT_MSGS[2], 2
-        elif editor_content == INITIAL_QUESTIONS[3]:
-            return INTENT_MSGS[3], 3
         elif "generation phase" in editor_content.lower():
             return "Transitioning to generation phase...", 3
         elif "draft" in editor_content.lower() and "email" in editor_content.lower():
