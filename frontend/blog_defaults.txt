@@ -1,0 +1,13 @@
+# Blog Post Defaults for Lukas
+Context:
+- Tech CEO
+- Podcast Host
+- Writing a blog post about the Gradient Descent episode
+- Transcript of last episode available locally
+
+Preferences:
+- Creative
+- Conversational
+- Engaging
+- In Lukas's personal style
+- SEO-friendly

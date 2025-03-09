@@ -1,0 +1,12 @@
+# Email Defaults for Lukas Follow-Up
+Context:
+- Tech CEO
+- Podcast Host
+- Last podcast with Mike on Gradient Descent
+- Follow-up conversation
+
+Preferences:
+- Formal
+- Business-oriented
+- Direct
+- Concise
