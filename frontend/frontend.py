@@ -90,13 +90,6 @@ def load_local_defaults(user_input: str):
         return [], []
     return parse_defaults_file(filename)
 
-# Global variables to store request data
-request_data = None
-request_messages = []
-request_model = ""
-request_max_tokens = 0
-request_temperature = 0.0
-
 # -------------------------
 # Redis Request Fetching
 # -------------------------
@@ -104,30 +97,29 @@ def fetch_request_action():
     """
     Fetch a request from Redis. The request JSON should contain messages and collaboration_phase.
     """
-    global request_data, request_messages, request_model, request_max_tokens, request_temperature
-    
-    req_data = redis_client.rpop("request_queue")
+    # req_data = redis_client.rpop("request_queue")
+    req_data = redis_client.lindex("request_queue", -1)
     if req_data:
-        request_data = json.loads(req_data)
-        request_messages = request_data.get("messages", [])
-        request_model = request_data.get("model", "")
-        request_max_tokens = request_data.get("max_tokens", 0)
-        request_temperature = request_data.get("temperature", 0.0)
-        collaboration_phase = request_data.get("collaboration_phase", "")
+        req_data = json.loads(req_data)
+        messages = req_data.get("messages", [])
+        collaboration_phase = req_data.get("collaboration_phase", "")
+        model = req_data.get("model", "")
+        max_tokens = req_data.get("max_tokens", 0)
+        temperature = req_data.get("temperature", 0.0)
         
-        # TODO: think about how to extract and import the cursor process
+        # TODO: think about how to get all the cursor message in
         # Extract the last user message as the initial question
-        # initial_question = ""
-        # for msg in reversed(request_messages):
-        #     if msg.get("role") == "user":
-        #         initial_question = msg.get("content", "")
-        #         break
+        initial_question = ""
+        for msg in reversed(messages):
+            if msg.get("role") == "user":
+                initial_question = msg.get("content", "")
+                break
                 
         # For now, we'll keep preferences and context empty
         preferences = []
         context_info = []
         
-        return request_messages, preferences, context_info
+        return initial_question, preferences, context_info
     else:
         return "", [], []
 
@@ -165,7 +157,7 @@ def process_input(user_input, prefs, context, phase, disc_sub, analysis_res, cla
                 f"Context: {', '.join(context) if context else 'None'}\n"
                 f"Preferences: {', '.join(prefs) if prefs else 'None'}\n\n"
                 "Analyze the intent and determine if more details are needed. "
-                "Provide a short summary of the intent and list a few follow-up questions."
+                "Provide a short summary of the intent and list a few follow-up questions - only if needed."
             )
             analysis_output = call_openai_api(prompt)
             new_conversation = conversation + f"User (Discovery): {user_input}\nAgent (Analysis): {analysis_output}\n\n"
@@ -197,7 +189,7 @@ def process_input(user_input, prefs, context, phase, disc_sub, analysis_res, cla
             prompt = (
                 f"Based on the clarified intent:\n'{clarified_intent}'\n"
                 f"with Preferences: {', '.join(prefs) if prefs else 'None'} and Context: {', '.join(context) if context else 'None'}\n\n"
-                "Generate an initial draft plan."
+                "Generate an initial draft."
             )
             draft = call_openai_api(prompt)
             new_conversation = conversation + f"Agent (Initial Draft): {draft}\n\n"
@@ -226,7 +218,7 @@ def process_input(user_input, prefs, context, phase, disc_sub, analysis_res, cla
             f"Review the following draft:\n'{draft_editor}'\n"
             f"and explain how it incorporates the clarified intent: '{clarified_intent}',\n"
             f"Preferences: {', '.join(prefs) if prefs else 'None'}, and Context: {', '.join(context) if context else 'None'}.\n\n"
-            "Produce a final verified output with an explanation."
+            "Produce a final verified output."
         )
         final_output = call_openai_api(prompt)
         new_conversation = conversation + f"Agent (Final Output): {final_output}\n\n"
@@ -242,33 +234,29 @@ def process_input(user_input, prefs, context, phase, disc_sub, analysis_res, cla
 # Function to submit final result to Redis
 def submit_final_result(final_content):
     try:
-        global request_data, request_messages, request_model, request_max_tokens, request_temperature
-        
-        if request_data:
+        # Get the original request data from Redis
+        req_data = redis_client.rpop("request_queue")
+        if req_data:
+            req_data = json.loads(req_data)
+            
             # Update the messages with the final content
-            updated_messages = request_messages.copy()
-            updated_messages.append({"role": "assistant", "content": final_content})
+            messages = req_data.get("messages", [])
+            messages.append({"role": "assistant", "content": final_content})
             
             # Prepare the response data with all original fields and updated collaboration_phase
             response_data = {
-                "messages": updated_messages,
-                "model": request_model,
-                "max_tokens": request_max_tokens,
-                "temperature": request_temperature,
+                "messages": messages,
+                "model": req_data.get("model", ""),
+                "max_tokens": req_data.get("max_tokens", 0),
+                "temperature": req_data.get("temperature", 0.0),
                 "collaboration_phase": "completed"  # Update the collaboration phase to the last phase
             }
             
             # Push the response back to Redis
-            # Push the response to Redis and wait to check if successful
-            push_result = redis_client.lpush("response_queue", json.dumps(response_data))
-            time.sleep(10)  # Wait for 10 seconds to check if the push was successful
-            if push_result:
-                print(f"Successfully pushed response to Redis queue: {push_result}")
-            else:
-                print("Warning: Redis push may not have been successful")
+            redis_client.lpush("response_queue", json.dumps(response_data))
             return "Final result submitted successfully!"
         else:
-            return "No request data available. Please fetch a request first."
+            return "No request data found in Redis."
     except Exception as e:
         return f"Error submitting final result: {str(e)}"
 

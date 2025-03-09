@@ -307,55 +307,57 @@ async def chat_completions(request: ChatCompletionRequest):
         # possibly only checking for where the message with the trigger word is makes the most sense
         # conversation_id = hash(request.messages[0].content + request.messages[1].content)
 
-        try:
-            # push request to request queue
-            request_data = {
-                "messages": [{"role": msg.role, "content": msg.content} for msg in request.messages],
-                "model": request.model,
-                "max_tokens": request.max_tokens,
-                "temperature": request.temperature,
-                "collaboration_phase": "discovery"
-            }
-            redis_client.lpush("request_queue", json.dumps(request_data))
-        
-            # retrieve response from response 
-            resp = redis_client.brpop("response_queue", timeout=300)
-            if resp is None:
-                raise HTTPException(status_code=408, detail="Timed out waiting for human review")
-            print(resp.keys())
-            edited_data = json.loads(resp[1])
-            print(edited_data.keys())
-            last_message = edited_data["messages"][-1]["content"]
-            print(last_message)
-            if request.stream:
-                return StreamingResponse(
-                    create_manual_oai_stream(last_message, model),
-                    media_type="text/event-stream"
-                )
-            else:
-                formatted_response = {
-                    "id": f"chatcmpl-{time.time()}",
-                    "object": "chat.completion",
-                    "created": int(time.time()),
-                    "model": model,
-                    "system_fingerprint": f"fp_{int(time.time())}",
-                    "choices": [{
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": last_message
-                        },
-                        "finish_reason": "stop"
-                    }],
-                    "usage": {
-                        "prompt_tokens": 100,
-                        "completion_tokens": 50,
-                        "total_tokens": 150
-                    }
-                }
-                return formatted_response
-        except Exception as e:
+        #try:
+        # push request to request queue
+        request_data = {
+            "messages": [{"role": msg.role, "content": msg.content} for msg in request.messages],
+            "model": request.model,
+            "max_tokens": request.max_tokens,
+            "temperature": request.temperature,
+            "collaboration_phase": "discovery"
+        }
+        redis_client.lpush("request_queue", json.dumps(request_data))
+    
+        # retrieve response from response 
+        resp = redis_client.brpop("response_queue", timeout=300)
+        if resp is None:
             raise HTTPException(status_code=408, detail="Timed out waiting for human review")
+        
+        edited_data = json.loads(resp[1])
+        last_message = edited_data["messages"][-1]["content"]
+        
+        model = request.model
+        edited_messages = edited_data
+        max_tokens = request.max_tokens
+        temperature = request.temperature
+        
+        if request.stream:
+            return StreamingResponse(
+                create_manual_oai_stream(last_message, model),
+                media_type="text/event-stream"
+            )
+        else:
+            formatted_response = {
+                "id": f"chatcmpl-{time.time()}",
+                "object": "chat.completion",
+                "created": int(time.time()),
+                "model": model,
+                "system_fingerprint": f"fp_{int(time.time())}",
+                "choices": [{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": last_message
+                    },
+                    "finish_reason": "stop"
+                }],
+                "usage": {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 50,
+                    "total_tokens": 150
+                }
+            }
+            return formatted_response
     # Baseline: no human review intervention
     else:
         print(f"***Baseline, cursor_rewrite: {cursor_rewrite}, cursor_chat: {cursor_chat}, "
