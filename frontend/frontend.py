@@ -36,10 +36,29 @@ def call_openai_api(prompt: str) -> str:
 
 def update_process_visualization(phase: str) -> str:
     """
-    Returns a minimalistic Markdown view of the process steps.
+    Returns a visually enhanced Markdown view of the process steps with colors and arrows.
     """
     steps = ["Discovery", "Execution", "Verification", "Completed"]
-    viz = " | ".join([f"**{s}**" if s.lower() == phase else s for s in steps if s.lower() != "completed" or phase=="completed"])
+    colors = {
+        "discovery": "#E6F7FF",  # Light blue
+        "execution": "#F6FFED",  # Light green
+        "verification": "#FFF7E6", # Light orange
+        "completed": "#F9F0FF"   # Light purple
+    }
+    
+    viz = ""
+    for i, step in enumerate(steps):
+        if step.lower() == phase:
+            # Current step with highlighted box
+            viz += f"<span style='background-color: {colors[phase.lower()]}; padding: 5px 10px; border: 2px solid #1890FF; border-radius: 4px; font-weight: bold; color: black;'>{step}</span>"
+        else:
+            # Inactive step
+            viz += f"<span style='background-color: #F5F5F5; padding: 5px 10px; border: 1px solid #D9D9D9; border-radius: 4px; color: black;'>{step}</span>"
+        
+        # Add arrow between steps (except after the last step)
+        if i < len(steps) - 1:
+            viz += " <span style='color: #1890FF; font-weight: bold;'>→</span> "
+    
     return viz
 
 # -------------------------
@@ -266,44 +285,54 @@ def submit_final_result(final_content):
 with gr.Blocks() as demo:
     gr.Markdown("# LLM-Based Dynamic Workflow")
     
-    # Process visualization at the top.
-    process_viz = gr.Markdown(update_process_visualization("discovery"))
-    
-    # Four panels arranged in a row.
+    # Redis buttons and Process visualization in one row
     with gr.Row():
-        # Panel 1: User Input (with an optional Fetch Request button)
-        with gr.Column():
-            fetch_btn = gr.Button("Fetch Request from Redis")
-            user_input = gr.Textbox(label="User Input",
-                                    placeholder="Enter your message here...",
-                                    lines=4)
-        # Panel 2: Personal Preferences (editable tags)
-        with gr.Column():
-            preferences = gr.Dropdown(choices=["Formal", "Casual", "Detailed", "Brief", "Technical"],
-                                      label="Personal Preferences",
-                                      multiselect=True,
-                                      allow_custom_value=True)
-        # Panel 3: Personal Context (editable tags)
-        with gr.Column():
-            context_box = gr.Dropdown(choices=["Tech Savvy", "Manager", "Developer", "Designer"],
-                                      label="Personal Context",
-                                      multiselect=True,
-                                      allow_custom_value=True)
-        # Panel 4: Conversation Summary (read-only)
-        with gr.Column():
-            conversation_box = gr.TextArea(label="Conversation Summary",
-                                           lines=10,
-                                           interactive=False)
+        fetch_btn = gr.Button("Fetch Request", size="sm")
+        process_viz = gr.HTML(update_process_visualization("discovery"))
+        submit_final_btn = gr.Button("Submit Result", size="sm")
     
-    # Joint Editor for Drafting (shows the current draft output)
-    draft_editor_box = gr.TextArea(label="Joint Editor (Draft)",
-                                   lines=6)
-    
-    # Final Submission Panel
+    # Main content area with two columns
     with gr.Row():
-        submit_final_btn = gr.Button("Submit Final Result")
+        # Left column: User input and draft editor
+        with gr.Column(scale=2):
+            user_input = gr.Textbox(
+                label="User Input",
+                placeholder="Enter your message here...",
+                lines=3
+            )
+            
+            # Joint Editor for Drafting (shows the current draft output)
+            draft_editor_box = gr.TextArea(
+                label="Joint Editor (Draft)",
+                lines=12
+            )
+        
+        # Right column: Conversation summary, preferences, and context
+        with gr.Column(scale=1):
+            conversation_box = gr.TextArea(
+                label="Conversation Summary",
+                lines=8,
+                interactive=False
+            )
+            
+            preferences = gr.Dropdown(
+                choices=["Formal", "Casual", "Detailed", "Brief", "Technical"],
+                label="Personal Preferences",
+                multiselect=True,
+                allow_custom_value=True
+            )
+            
+            context_box = gr.Dropdown(
+                choices=["Tech Savvy", "Manager", "Developer", "Designer"],
+                label="Personal Context",
+                multiselect=True,
+                allow_custom_value=True
+            )
     
-    # Hidden state variables.
+    # Status message for submission
+    submission_status = gr.Textbox(label="Submission Status", visible=False)
+    
+    # Hidden state variables
     phase_state = gr.State("discovery")
     disc_sub_state = gr.State("analysis")       # Discovery subphase: "analysis" then "clarification"
     analysis_res_state = gr.State("")            # To store the analysis result
