@@ -1,69 +1,371 @@
 import json
 import redis
 import gradio as gr
-from gradio import update
+import openai
+import time
+import os
+from dotenv import load_dotenv
 
-# Connect to Redis (ensure the same connection settings as in backend.py)
+# Set your OpenAI API key (alternatively, use an environment variable)
+# Load environment variables
+load_dotenv("../backend/.env")
+openai.api_key = os.getenv('OPENAI_API_KEY')
+
+# -------------------------
+# Redis Connection Logic
+# -------------------------
 redis_client = redis.Redis(host='localhost', port=6379, db=0)
 
-def submit_edited_message(messages_text, model, max_tokens, temperature, collaboration_phase):
+# -------------------------
+# Helper Functions for OpenAI Calls
+# -------------------------
+def call_openai_api(prompt: str) -> str:
+    """
+    Calls OpenAI's Chat API using the new interface.
+    """
     try:
-        messages = json.loads(messages_text)
-        edited_data = {
-            "messages": messages,
-            "model": model,
-            "max_tokens": int(max_tokens),
-            "temperature": float(temperature),
-            "collaboration_phase": collaboration_phase
-        }
-        # Push the human-edited response into the Redis response queue
-        redis_client.lpush("response_queue", json.dumps(edited_data))
-        return "Message submitted for processing"
+        response = openai.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "system", "content": prompt}],
+            temperature=0.7,
+        )
+        output = response.choices[0].message.content.strip()
+        return output
     except Exception as e:
-        return f"Error: {str(e)}"
+        return f"Error calling OpenAI: {str(e)}"
 
-def check_queue():
-    # Attempt to retrieve a pending request from the Redis request queue
+def update_process_visualization(phase: str) -> str:
+    """
+    Returns a minimalistic Markdown view of the process steps.
+    """
+    steps = ["Discovery", "Execution", "Verification", "Completed"]
+    viz = " | ".join([f"**{s}**" if s.lower() == phase else s for s in steps if s.lower() != "completed" or phase=="completed"])
+    return viz
+
+# -------------------------
+# Helper Functions for Loading Local Defaults
+# -------------------------
+def parse_defaults_file(filename: str):
+    """
+    Parses a local defaults text file and returns a tuple (preferences, context).
+    The file must have sections starting with 'Context:' and 'Preferences:'.
+    Lines beginning with '-' are treated as items.
+    """
+    preferences = []
+    context = []
+    try:
+        with open(filename, "r") as f:
+            lines = f.readlines()
+        mode = None
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.lower().startswith("context:"):
+                mode = "context"
+                continue
+            elif line.lower().startswith("preferences:"):
+                mode = "preferences"
+                continue
+            elif line.startswith("-"):
+                item = line.lstrip("-").strip()
+                if mode == "context":
+                    context.append(item)
+                elif mode == "preferences":
+                    preferences.append(item)
+        return preferences, context
+    except Exception as e:
+        return [], []
+
+def load_local_defaults(user_input: str):
+    """
+    Based on keyword matching in the user_input, load the appropriate default preferences and context.
+    """
+    ui = user_input.lower()
+    if "blog" in ui or "website" in ui or "post" in ui:
+        filename = "blog_defaults.txt"
+    elif "follow" in ui or "mike" in ui or "email" in ui:
+        filename = "email_defaults.txt"
+    else:
+        return [], []
+    return parse_defaults_file(filename)
+
+# Global variables to store request data
+request_data = None
+request_messages = []
+request_model = ""
+request_max_tokens = 0
+request_temperature = 0.0
+
+# -------------------------
+# Redis Request Fetching
+# -------------------------
+def fetch_request_action():
+    """
+    Fetch a request from Redis. The request JSON should contain messages and collaboration_phase.
+    """
+    global request_data, request_messages, request_model, request_max_tokens, request_temperature
+    
     req_data = redis_client.rpop("request_queue")
     if req_data:
-        req_data = json.loads(req_data)
-        return (
-            json.dumps(req_data.get("messages", []), indent=2),
-            req_data.get("model", ""),
-            req_data.get("max_tokens", ""),
-            req_data.get("temperature", ""),
-            req_data.get("collaboration_phase", "Discovery")
+        request_data = json.loads(req_data)
+        request_messages = request_data.get("messages", [])
+        request_model = request_data.get("model", "")
+        request_max_tokens = request_data.get("max_tokens", 0)
+        request_temperature = request_data.get("temperature", 0.0)
+        collaboration_phase = request_data.get("collaboration_phase", "")
+        
+        # TODO: think about how to extract and import the cursor process
+        # Extract the last user message as the initial question
+        # initial_question = ""
+        # for msg in reversed(request_messages):
+        #     if msg.get("role") == "user":
+        #         initial_question = msg.get("content", "")
+        #         break
+                
+        # For now, we'll keep preferences and context empty
+        preferences = []
+        context_info = []
+        
+        return request_messages, preferences, context_info
+    else:
+        return "", [], []
+
+# -------------------------
+# Process Function: process_input
+# -------------------------
+def process_input(user_input, prefs, context, phase, disc_sub, analysis_res, clarified_intent, draft_editor, conversation):
+    """
+    Processes the user input based on the current phase and subphase.
+    
+    State Variables:
+      - phase: "discovery", "execution", "verification", or "completed"
+      - disc_sub: for Discovery, either "analysis" or "clarification"
+      - analysis_res: stores the initial analysis output (from Discovery analysis)
+      - clarified_intent: final intent determined after clarification
+      - draft_editor: contents of the joint editor (draft text)
+      - conversation: the accumulated conversation summary
+    
+    Returns:
+      Updated (phase, disc_sub, analysis_res, clarified_intent, draft_editor, conversation, prefill_input, prefs, context)
+    """
+    # DISCOVERY PHASE
+    if phase == "discovery":
+        if disc_sub == "analysis":
+            # Load defaults if prefs or context are empty.
+            if not prefs or not context:
+                default_p, default_c = load_local_defaults(user_input)
+                if not prefs:
+                    prefs = default_p
+                if not context:
+                    context = default_c
+            prompt = (
+                f"Discovery Analysis:\n"
+                f"User says: '{user_input}'\n"
+                f"Context: {', '.join(context) if context else 'None'}\n"
+                f"Preferences: {', '.join(prefs) if prefs else 'None'}\n\n"
+                "Analyze the intent and determine if more details are needed. "
+                "Provide a short summary of the intent and list a few follow-up questions."
+            )
+            analysis_output = call_openai_api(prompt)
+            new_conversation = conversation + f"User (Discovery): {user_input}\nAgent (Analysis): {analysis_output}\n\n"
+            # Set discovery subphase to clarification.
+            new_disc_sub = "clarification"
+            prefill = "Please clarify your intent and update context/preferences if needed."
+            # Return updated state; remain in discovery phase.
+            return phase, new_disc_sub, analysis_output, clarified_intent, draft_editor, new_conversation, prefill, prefs, context
+
+        elif disc_sub == "clarification":
+            # Use the stored analysis_res and the user's clarification to produce a final clarified intent.
+            prompt = (
+                f"Combine the following analysis:\n{analysis_res}\n\n"
+                f"with the user's clarification:\n{user_input}\n\n"
+                "Produce a final, clear statement of the user's intent."
+            )
+            final_intent = call_openai_api(prompt)
+            new_conversation = conversation + f"User (Clarification): {user_input}\nAgent (Final Intent): {final_intent}\n\n"
+            new_phase = "execution"
+            # Save the final clarified intent.
+            new_clarified_intent = final_intent
+            prefill = final_intent  # pre-fill the input with the clarified intent for drafting
+            return new_phase, "", analysis_res, new_clarified_intent, draft_editor, new_conversation, prefill, prefs, context
+
+    # EXECUTION PHASE
+    elif phase == "execution":
+        if draft_editor == "":
+            # Generate an initial draft based on the clarified intent.
+            prompt = (
+                f"Based on the clarified intent:\n'{clarified_intent}'\n"
+                f"with Preferences: {', '.join(prefs) if prefs else 'None'} and Context: {', '.join(context) if context else 'None'}\n\n"
+                "Generate an initial draft plan."
+            )
+            draft = call_openai_api(prompt)
+            new_conversation = conversation + f"Agent (Initial Draft): {draft}\n\n"
+            new_draft = draft
+            prefill = "Please provide feedback to refine the draft."
+            return phase, disc_sub, analysis_res, clarified_intent, new_draft, new_conversation, prefill, prefs, context
+        else:
+            # User provides feedback to refine the draft.
+            prompt = (
+                f"Refine the following draft:\n'{draft_editor}'\n"
+                f"Using the feedback: '{user_input}'\n"
+                f"while maintaining the clarified intent: '{clarified_intent}',\n"
+                f"Preferences: {', '.join(prefs) if prefs else 'None'}, and Context: {', '.join(context) if context else 'None'}.\n\n"
+                "Produce a refined draft."
+            )
+            refined_draft = call_openai_api(prompt)
+            new_conversation = conversation + f"User Feedback: {user_input}\nAgent (Refined Draft): {refined_draft}\n\n"
+            new_draft = refined_draft
+            new_phase = "verification"
+            prefill = refined_draft
+            return new_phase, disc_sub, analysis_res, clarified_intent, new_draft, new_conversation, prefill, prefs, context
+
+    # VERIFICATION PHASE
+    elif phase == "verification":
+        prompt = (
+            f"Review the following draft:\n'{draft_editor}'\n"
+            f"and explain how it incorporates the clarified intent: '{clarified_intent}',\n"
+            f"Preferences: {', '.join(prefs) if prefs else 'None'}, and Context: {', '.join(context) if context else 'None'}.\n\n"
+            "Produce a final verified output with an explanation."
         )
-    return update(), update(), update(), update(), update()
+        final_output = call_openai_api(prompt)
+        new_conversation = conversation + f"Agent (Final Output): {final_output}\n\n"
+        new_phase = "completed"
+        prefill = final_output
+        new_draft = final_output
+        return new_phase, disc_sub, analysis_res, clarified_intent, new_draft, new_conversation, prefill, prefs, context
 
-def create_gradio_interface():
-    with gr.Blocks() as demo:
-        gr.Markdown("## Human Review Interface")
-        with gr.Row():
-            with gr.Column():
-                messages_text = gr.Textbox(label="Messages (JSON format)", lines=10)
-                model = gr.Textbox(label="Model")
-                max_tokens = gr.Number(label="Max Tokens")
-                temperature = gr.Number(label="Temperature")
-                collaboration_phase = gr.Radio(
-                    ["Discovery", "Generation", "Final Review"],
-                    label="Collaboration Phase",
-                    value="Discovery"
-                )
-                submit_btn = gr.Button("Submit Edited Message")
-                status = gr.Textbox(label="Status")
-                submit_btn.click(
-                    fn=submit_edited_message,
-                    inputs=[messages_text, model, max_tokens, temperature, collaboration_phase],
-                    outputs=status
-                )
-                refresh_btn = gr.Button("Check for New Requests")
-                refresh_btn.click(
-                    fn=check_queue,
-                    inputs=None,
-                    outputs=[messages_text, model, max_tokens, temperature, collaboration_phase]
-                )
-    demo.launch(server_name="0.0.0.0", server_port=7860, share=True)
+    # COMPLETED PHASE
+    else:
+        return phase, disc_sub, analysis_res, clarified_intent, draft_editor, conversation, user_input, prefs, context
 
-if __name__ == "__main__":
-    create_gradio_interface()
+# Function to submit final result to Redis
+def submit_final_result(final_content):
+    try:
+        global request_data, request_messages, request_model, request_max_tokens, request_temperature
+        
+        if request_data:
+            # Update the messages with the final content
+            updated_messages = request_messages.copy()
+            updated_messages.append({"role": "assistant", "content": final_content})
+            
+            # Prepare the response data with all original fields and updated collaboration_phase
+            response_data = {
+                "messages": updated_messages,
+                "model": request_model,
+                "max_tokens": request_max_tokens,
+                "temperature": request_temperature,
+                "collaboration_phase": "completed"  # Update the collaboration phase to the last phase
+            }
+            
+            # Push the response back to Redis
+            # Push the response to Redis and wait to check if successful
+            push_result = redis_client.lpush("response_queue", json.dumps(response_data))
+            time.sleep(10)  # Wait for 10 seconds to check if the push was successful
+            if push_result:
+                print(f"Successfully pushed response to Redis queue: {push_result}")
+            else:
+                print("Warning: Redis push may not have been successful")
+            return "Final result submitted successfully!"
+        else:
+            return "No request data available. Please fetch a request first."
+    except Exception as e:
+        return f"Error submitting final result: {str(e)}"
+
+# -------------------------
+# Gradio UI Definition
+# -------------------------
+with gr.Blocks() as demo:
+    gr.Markdown("# LLM-Based Dynamic Workflow")
+    
+    # Process visualization at the top.
+    process_viz = gr.Markdown(update_process_visualization("discovery"))
+    
+    # Four panels arranged in a row.
+    with gr.Row():
+        # Panel 1: User Input (with an optional Fetch Request button)
+        with gr.Column():
+            fetch_btn = gr.Button("Fetch Request from Redis")
+            user_input = gr.Textbox(label="User Input",
+                                    placeholder="Enter your message here...",
+                                    lines=4)
+        # Panel 2: Personal Preferences (editable tags)
+        with gr.Column():
+            preferences = gr.Dropdown(choices=["Formal", "Casual", "Detailed", "Brief", "Technical"],
+                                      label="Personal Preferences",
+                                      multiselect=True,
+                                      allow_custom_value=True)
+        # Panel 3: Personal Context (editable tags)
+        with gr.Column():
+            context_box = gr.Dropdown(choices=["Tech Savvy", "Manager", "Developer", "Designer"],
+                                      label="Personal Context",
+                                      multiselect=True,
+                                      allow_custom_value=True)
+        # Panel 4: Conversation Summary (read-only)
+        with gr.Column():
+            conversation_box = gr.TextArea(label="Conversation Summary",
+                                           lines=10,
+                                           interactive=False)
+    
+    # Joint Editor for Drafting (shows the current draft output)
+    draft_editor_box = gr.TextArea(label="Joint Editor (Draft)",
+                                   lines=6)
+    
+    # Final Submission Panel
+    with gr.Row():
+        submit_final_btn = gr.Button("Submit Final Result")
+    
+    # Hidden state variables.
+    phase_state = gr.State("discovery")
+    disc_sub_state = gr.State("analysis")       # Discovery subphase: "analysis" then "clarification"
+    analysis_res_state = gr.State("")            # To store the analysis result
+    clarified_intent_state = gr.State("")
+    draft_editor_state = gr.State("")
+    conversation_state = gr.State("")
+    
+    # -------------------------
+    # Event Bindings
+    # -------------------------
+    # Fetch request from Redis to pre-fill the User Input, Preferences, and Context panels.
+    fetch_btn.click(
+        fn=fetch_request_action,
+        inputs=None,
+        outputs=[user_input, preferences, context_box]
+    )
+    
+    # When the user hits enter in the User Input box, process the input.
+    user_input.submit(
+        fn=process_input,
+        inputs=[user_input, preferences, context_box, phase_state, disc_sub_state, analysis_res_state, clarified_intent_state, draft_editor_state, conversation_state],
+        outputs=[phase_state, disc_sub_state, analysis_res_state, clarified_intent_state, draft_editor_state, conversation_state, user_input, preferences, context_box]
+    )
+    
+    # Update the Process Visualization.
+    phase_state.change(
+        lambda ph: update_process_visualization(ph),
+        inputs=[phase_state],
+        outputs=[process_viz]
+    )
+    
+    # Update the Conversation Summary panel.
+    conversation_state.change(
+        lambda conv: conv,
+        inputs=[conversation_state],
+        outputs=[conversation_box]
+    )
+    
+    # Update the Joint Editor panel.
+    draft_editor_state.change(
+        lambda d: d,
+        inputs=[draft_editor_state],
+        outputs=[draft_editor_box]
+    )
+    
+    # Submit the final result (contents of the Joint Editor) to Redis.
+    submit_final_btn.click(
+        fn=lambda final: submit_final_result(final),
+        inputs=[draft_editor_state],
+        outputs=gr.Textbox(label="Submission Status")
+    )
+    
+demo.launch(server_name="0.0.0.0", server_port=7860, share=True)

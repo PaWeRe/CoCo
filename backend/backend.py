@@ -85,7 +85,7 @@ async def stream_response(response):
     yield "data: [DONE]\n\n"
 
 # Helper: simulate a discovery stream for initial messages
-async def create_discovery_stream(message_content, model):
+async def create_manual_oai_stream(message_content, model):
     chunk_size = 10  # characters per chunk
     message_id = f"chatcmpl-{int(time.time())}"
     
@@ -303,31 +303,33 @@ async def chat_completions(request: ChatCompletionRequest):
         if cursor_rewrite: 
             print("WARNING: Cursor Re-write doesn't have enough timeout for collaboratio. Try @coco_collab.")
 
-        # TODO: possibly only checking for where the message with the trigger word is makes the most sense
-        conversation_id = hash(request.messages[0].content + request.messages[1].content)
-        model = request.model
-        edited_messages = [{"role": msg.role, "content": msg.content} for msg in request.messages]
-        max_tokens = request.max_tokens
-        temperature = request.temperature
+        # TODO: considering adding backend-side conversation phase tracking and collaboration phases back in
+        # possibly only checking for where the message with the trigger word is makes the most sense
+        # conversation_id = hash(request.messages[0].content + request.messages[1].content)
 
-        if conversation_id not in collaboration_state:
-            print(f"***START CONVERSATION, ID: {conversation_id}***")
-            print("***DISCOVERY***")
-            collaboration_state[conversation_id] = "Discovery"
-            discovery_message = {
-                "role": "assistant",
-                "content": (
-                    "I'd like to help you with your question. To better assist you, "
-                    "could you please provide more information about:\n\n"
-                    "1. What specific problem are you trying to solve?\n"
-                    "2. What have you tried so far?\n"
-                    "3. Do you have any preferences for the solution approach?\n"
-                    "4. Are there any constraints or requirements I should be aware of?"
-                )
+        try:
+            # push request to request queue
+            request_data = {
+                "messages": [{"role": msg.role, "content": msg.content} for msg in request.messages],
+                "model": request.model,
+                "max_tokens": request.max_tokens,
+                "temperature": request.temperature,
+                "collaboration_phase": "discovery"
             }
+            redis_client.lpush("request_queue", json.dumps(request_data))
+        
+            # retrieve response from response 
+            resp = redis_client.brpop("response_queue", timeout=300)
+            if resp is None:
+                raise HTTPException(status_code=408, detail="Timed out waiting for human review")
+            print(resp.keys())
+            edited_data = json.loads(resp[1])
+            print(edited_data.keys())
+            last_message = edited_data["messages"][-1]["content"]
+            print(last_message)
             if request.stream:
                 return StreamingResponse(
-                    create_discovery_stream(discovery_message["content"], model),
+                    create_manual_oai_stream(last_message, model),
                     media_type="text/event-stream"
                 )
             else:
@@ -339,7 +341,10 @@ async def chat_completions(request: ChatCompletionRequest):
                     "system_fingerprint": f"fp_{int(time.time())}",
                     "choices": [{
                         "index": 0,
-                        "message": discovery_message,
+                        "message": {
+                            "role": "assistant",
+                            "content": last_message
+                        },
                         "finish_reason": "stop"
                     }],
                     "usage": {
@@ -349,53 +354,8 @@ async def chat_completions(request: ChatCompletionRequest):
                     }
                 }
                 return formatted_response
-        else:
-            print(f"***CONTINUE CONVERSATION, ID: {conversation_id}***")
-            current_phase = collaboration_state[conversation_id]
-            if current_phase == "Discovery":
-                print("***DISCOVERY***")
-                collaboration_state[conversation_id] = "Generation"
-                try:
-                    request_data = {
-                        "messages": edited_messages,
-                        "model": model,
-                        "max_tokens": max_tokens,
-                        "temperature": temperature,
-                        "collaboration_phase": "Generation"
-                    }
-                    redis_client.lpush("request_queue", json.dumps(request_data))
-                    resp = redis_client.brpop("response_queue", timeout=300)
-                    if resp is None:
-                        raise HTTPException(status_code=408, detail="Timed out waiting for human review")
-                    edited_data = json.loads(resp[1])
-                    edited_messages = edited_data["messages"]
-                    model = edited_data["model"]
-                    max_tokens = edited_data["max_tokens"]
-                    temperature = edited_data["temperature"]
-                except Exception as e:
-                    raise HTTPException(status_code=408, detail="Timed out waiting for human review")
-            else:  # Generation phase
-                print("***GENERATION***")
-                del collaboration_state[conversation_id]
-                try:
-                    request_data = {
-                        "messages": edited_messages,
-                        "model": model,
-                        "max_tokens": max_tokens,
-                        "temperature": temperature,
-                        "collaboration_phase": "Final Review"
-                    }
-                    redis_client.lpush("request_queue", json.dumps(request_data))
-                    resp = redis_client.brpop("response_queue", timeout=300)
-                    if resp is None:
-                        raise HTTPException(status_code=408, detail="Timed out waiting for human review")
-                    edited_data = json.loads(resp[1])
-                    edited_messages = edited_data["messages"]
-                    model = edited_data["model"]
-                    max_tokens = edited_data["max_tokens"]
-                    temperature = edited_data["temperature"]
-                except Exception as e:
-                    raise HTTPException(status_code=408, detail="Timed out waiting for human review")
+        except Exception as e:
+            raise HTTPException(status_code=408, detail="Timed out waiting for human review")
     # Baseline: no human review intervention
     else:
         print(f"***Baseline, cursor_rewrite: {cursor_rewrite}, cursor_chat: {cursor_chat}, "
