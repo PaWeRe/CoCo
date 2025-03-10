@@ -175,12 +175,12 @@ async def retrieve_context(request: ContextRequest):
         # Return different context based on intent
         if intent == "blog_writing":
             try:
-                with open('gd_episode_david_cahn.txt', 'r') as f:
+                with open('gd_episode_mike_knoop.txt', 'r') as f:
                     content = f.read()
                 return {
                     "context": content,
-                    "source": "gd_episode_david_cahn.txt",
-                    "description": "Transcript from Gradient Descent podcast with David Cahn"
+                    "source": "gd_episode_mike_knoop.txt",
+                    "description": "Transcript from Gradient Dissent podcast with Mike Knoop"
                 }
             except FileNotFoundError:
                 return {
@@ -285,7 +285,7 @@ async def chat_completions(request: ChatCompletionRequest):
         blog_message = Message(
             role="user",
             content=(
-                f"Here is the transcript from the last gradient descent episode with David Cahn. "
+                f"Here is the transcript from the last gradient dissent episode with Mike Knoop. "
                 f"Write a detailed blog article based on this transcript.\n\n"
                 f"Context: {context_response['context']}\n\n"
                 f"Preferences: {json.dumps(preference_response['preferences'], indent=2)}"

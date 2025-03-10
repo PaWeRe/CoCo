@@ -1,13 +1,13 @@
 # Blog Post Defaults for Lukas
 Context:
-- Tech CEO
-- Podcast Host
-- Writing a blog post about the Gradient Descent episode
-- Transcript of last episode available locally
+- Lukas' social graph
+- Mike Knoop's social graph
+- Transcript of GD Episode with Mike Knoop
+- Lukas' personal website in HTML
 
 Preferences:
-- Creative
+- Lukas' style for blog posts
+- Narrative-driven
 - Conversational
-- Engaging
-- In Lukas's personal style
-- SEO-friendly
+- Concrete examples
+- Emphasis on passion
