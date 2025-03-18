@@ -5,3 +5,4 @@ openai
 pydantic
 gradio
 redis
+python-dotenv
