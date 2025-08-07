@@ -6,3 +6,6 @@ pydantic
 gradio
 redis
 python-dotenv
+langchain
+langgraph
+langchain-openai

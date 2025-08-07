@@ -1,6 +1,8 @@
 # CoCo
 LM mediator. Help LMs understand you.
 
+> **Note**: This project is inspired by and builds upon Harrison Chase's LangGraph Email Assistant Tutorial and the [agents-from-scratch](https://github.com/langchain-ai/agents-from-scratch) repo. Check out the tutorial for a comprehensive guide on building email assistants with LangGraph.
+
 ## Quickstart
 1. Create virtual env and set up environment 
     * Create a `.env` file with at least `OPENAI_API_KEY` and `WANDB_API_KEY`

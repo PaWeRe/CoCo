@@ -325,6 +325,7 @@ async def coco_delegate(
 
 
 # MCP Tool: Collaborate with human review
+# TODO: explore ways to help tool calling agent know more about the context of a fct call (as it generates necessary input params on behalf of user!) -> doc strings, different params, fct signature etc.
 @mcp.tool()
 async def coco_collab(
     raw_input: str,
@@ -332,7 +333,6 @@ async def coco_collab(
     """Process a request with human collaboration via Redis queue."""
     print("***MCP Tool: Collaborate***")
 
-    # TODO: currently tool usage difficulties with e.g. sonnet 3.5 when saying: "Can you help me draft my blogpost based on the last podcast episode with Coco collaboratively"
     # Extract parameters from the raw input
     messages, model, max_tokens, temperature = extract_params_from_request(raw_input)
 
